@@ -1,0 +1,41 @@
+version: 0.2
+
+env:
+  shell: bash
+
+phases:
+  install:
+    runtime-versions:
+      python: 3.12
+    commands:
+      - echo "Installing uv..."
+      - python -m pip install uv
+
+  pre_build:
+    commands:
+      - echo "Installing project dependencies..."
+      - uv sync --frozen
+      - echo "Running unit tests..."
+      - uv run pytest -v
+      - echo "Preparing Docker image variables..."
+      - export IMAGE_URI="$AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/$IMAGE_REPO_NAME"
+      - export IMAGE_TAG="$(echo $CODEBUILD_RESOLVED_SOURCE_VERSION | cut -c 1-7)"
+      - echo "Logging in to Amazon ECR..."
+      - aws ecr get-login-password --region "$AWS_DEFAULT_REGION" | docker login --username AWS --password-stdin "$AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com"
+
+  build:
+    commands:
+      - echo "Building Docker image..."
+      - docker build -t "$IMAGE_URI:$IMAGE_TAG" .
+
+  post_build:
+    commands:
+      - echo "Pushing Docker image to Amazon ECR..."
+      - docker push "$IMAGE_URI:$IMAGE_TAG"
+      - echo "Creating imagedefinitions.json..."
+      - printf '[{"name":"aws-cicd-demo-container","imageUri":"%s"}]' "$IMAGE_URI:$IMAGE_TAG" > imagedefinitions.json
+      - echo "Build completed successfully."
+
+artifacts:
+  files:
+    - imagedefinitions.json
